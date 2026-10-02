@@ -1,0 +1,7 @@
+streamlit>=1.50
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.0
+pandas>=2.2
+plotly>=5.22
+openpyxl>=3.1

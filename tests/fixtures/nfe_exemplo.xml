@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <NFe>
+    <infNFe Id="NFe43260915436940001177550010445859151740147064" versao="4.00">
+      <ide>
+        <mod>55</mod>
+        <serie>1</serie>
+        <nNF>44585915</nNF>
+        <dhEmi>2026-09-24T10:15:00-03:00</dhEmi>
+      </ide>
+      <emit>
+        <CNPJ>15436940001177</CNPJ>
+        <xNome>AMAZON SERVICOS DE VAREJO DO BRASIL LTDA.</xNome>
+        <enderEmit>
+          <xLgr>AV ANTONIO FRANCISCO DA SILVA</xLgr>
+          <nro>1000</nro>
+          <xBairro>DISTRITO INDUSTRIAL</xBairro>
+          <xMun>NOVA SANTA RITA</xMun>
+          <UF>RS</UF>
+        </enderEmit>
+        <IE>0960000000</IE>
+      </emit>
+      <det nItem="1">
+        <prod>
+          <cProd>B0TESTE001</cProd>
+          <xProd>CABO USB-C 1M</xProd>
+          <uCom>UN</uCom>
+          <qCom>2.0000</qCom>
+          <vUnCom>15.4200000000</vUnCom>
+          <vProd>30.84</vProd>
+        </prod>
+      </det>
+      <det nItem="2">
+        <prod>
+          <cProd>B0TESTE002</cProd>
+          <xProd>LAMPADA LED 9W</xProd>
+          <uCom>UN</uCom>
+          <qCom>1.0000</qCom>
+          <vUnCom>30.0000000000</vUnCom>
+          <vProd>30.00</vProd>
+        </prod>
+      </det>
+      <total>
+        <ICMSTot>
+          <vDesc>0.00</vDesc>
+          <vNF>60.84</vNF>
+        </ICMSTot>
+      </total>
+      <pag>
+        <detPag>
+          <tPag>03</tPag>
+          <vPag>60.84</vPag>
+        </detPag>
+      </pag>
+    </infNFe>
+  </NFe>
+  <protNFe versao="4.00">
+    <infProt>
+      <nProt>143260000000001</nProt>
+    </infProt>
+  </protNFe>
+</nfeProc>
