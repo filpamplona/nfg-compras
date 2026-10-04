@@ -245,3 +245,72 @@ def vincular_automaticos(conn: sqlite3.Connection) -> int:
         for cnpj, codigo, pid in novos:
             vincular(conn, cnpj, codigo, pid, origem="auto")
         total += len(novos)
+
+
+_COL_COMPARAR = ["cnpj", "loja", "ultimo_preco", "ultima_data", "descricao_original",
+                 "dif_reais", "dif_pct", "mais_barato"]
+_COL_HISTORICO = ["emissao", "loja", "valor_unitario", "descricao"]
+_COL_VISAO = ["produto_id", "produto", "venda", "loja_mais_barata", "menor_preco", "maior_preco", "dif_pct"]
+
+
+def _itens_do_produto(conn: sqlite3.Connection, produto_id: int | None = None) -> pd.DataFrame:
+    """Itens válidos vinculados a produtos (todos, ou só `produto_id`), com a coluna produto_id."""
+    filtro, params = ("WHERE produto_id = ?", (produto_id,)) if produto_id is not None else ("", ())
+    vinculos = pd.DataFrame(
+        conn.execute(f"SELECT cnpj, codigo, produto_id FROM produto_vinculo {filtro}", params).fetchall(),
+        columns=["cnpj", "codigo", "produto_id"],
+    )
+    itens = _itens_chaveados(conn)
+    if vinculos.empty or itens.empty:
+        return _vazio(["produto_id", *_COL_ITENS_CHAVEADOS])
+    return itens.merge(vinculos, on=["cnpj", "codigo"], how="inner")
+
+
+def _ultimo_por_loja(itens: pd.DataFrame) -> pd.DataFrame:
+    """Linha mais recente de cada (produto_id, cnpj); `itens` já vem do mais antigo ao mais novo."""
+    return itens.sort_values("emissao", kind="stable").drop_duplicates(["produto_id", "cnpj"], keep="last")
+
+
+def _comparar(ultimos: pd.DataFrame) -> pd.DataFrame:
+    df = ultimos.rename(columns={"valor_unitario": "ultimo_preco", "emissao": "ultima_data",
+                                 "descricao": "descricao_original"}).copy()
+    menor = df["ultimo_preco"].min()
+    df["dif_reais"] = (df["ultimo_preco"] - menor).round(2)
+    df["dif_pct"] = ((df["ultimo_preco"] - menor) / menor * 100).round(2)
+    df["mais_barato"] = df["ultimo_preco"] == menor
+    return df.sort_values(["ultimo_preco", "loja"], kind="stable")[_COL_COMPARAR].reset_index(drop=True)
+
+
+def comparar_produto(conn: sqlite3.Connection, produto_id: int) -> pd.DataFrame:
+    itens = _itens_do_produto(conn, produto_id)
+    if itens.empty:
+        return _vazio(_COL_COMPARAR)
+    return _comparar(_ultimo_por_loja(itens))
+
+
+def historico_produto(conn: sqlite3.Connection, produto_id: int) -> pd.DataFrame:
+    itens = _itens_do_produto(conn, produto_id)
+    if itens.empty:
+        return _vazio(_COL_HISTORICO)
+    itens = itens.sort_values("emissao", kind="stable")
+    return itens[["emissao", "loja", "valor_unitario", "descricao"]].reset_index(drop=True)
+
+
+def visao_geral_df(conn: sqlite3.Connection) -> pd.DataFrame:
+    itens = _itens_do_produto(conn)
+    if itens.empty:
+        return _vazio(_COL_VISAO)
+    ultimos = _ultimo_por_loja(itens)
+    produtos = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT id, nome, venda FROM produtos")}
+    linhas = []
+    for pid, grupo in ultimos.groupby("produto_id"):
+        if len(grupo) < 2 or pid not in produtos:
+            continue
+        comp = _comparar(grupo)
+        menor, maior = comp["ultimo_preco"].min(), comp["ultimo_preco"].max()
+        linhas.append((pid, produtos[pid][0], produtos[pid][1], comp["loja"].iloc[0], menor, maior,
+                       round((maior - menor) / menor * 100, 2)))
+    if not linhas:
+        return _vazio(_COL_VISAO)
+    df = pd.DataFrame(linhas, columns=_COL_VISAO)
+    return df.sort_values(["dif_pct", "produto"], ascending=[False, True], kind="stable").reset_index(drop=True)
