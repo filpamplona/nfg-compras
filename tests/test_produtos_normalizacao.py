@@ -112,3 +112,19 @@ def test_decimal_com_ponto():
     a = normalizar_produto("COCA COLA 1.5L", "UN")
     assert a.tamanho == (Decimal(1500), "ML") and "1" not in a.tokens
     assert normalizar_produto("AGUA 0.5L", "UN").tamanho == (Decimal(500), "ML")
+
+
+def test_ref_nao_vira_refrigerante():
+    assert "REFRIGERANTE" not in normalizar_produto("ACUCAR REF UNIAO 1KG", "UN").palavras
+
+
+def test_lt_so_vira_leite_no_inicio():
+    assert "LEITE" not in normalizar_produto("CERV BRAHMA LT 350ML", "UN").palavras
+    assert normalizar_produto("LT INTEGRAL PIRACANITA 1L", "UN").tipo.startswith("LEITE")
+
+
+def test_barra_com_espaco_vira_com_sem():
+    a = normalizar_produto("BISC C/ RECHEIO MORANGO 100G", "UN")
+    assert a.tipo == "BISCOITO COM" and "C" not in a.palavras
+    b = normalizar_produto("AMENDOIM S/ SAL 200G", "UN")
+    assert "SEM" in b.palavras and "S" not in b.palavras

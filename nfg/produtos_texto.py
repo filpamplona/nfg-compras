@@ -14,7 +14,6 @@ ABREVIACOES: dict[str, str] = {
     "MUSS": "MUSSARELA",
     "FAT": "FATIADO",
     "RAL": "RALADO",
-    "LT": "LEITE",
     "LTE": "LEITE",
     "CHOC": "CHOCOLATE",
     "ACHOC": "ACHOCOLATADO",
@@ -62,7 +61,6 @@ ABREVIACOES: dict[str, str] = {
     "CREM": "CREME",
     "EXT": "EXTRATO",
     "MOLH": "MOLHO",
-    "REF": "REFRIGERANTE",
 }
 
 SINONIMOS_TIPO: dict[str, str] = {
@@ -200,11 +198,12 @@ def _assinar(descricao: str, unidade: str | None) -> tuple[Assinatura, tuple[str
         if tam != escolhido and (palavra := formatar_tamanho(tam)) not in secundarios:
             secundarios.append(palavra)
 
-    texto = re.sub(r"\bC/(?=[A-Z])", "COM ", texto)
-    texto = re.sub(r"\bS/(?=[A-Z])", "SEM ", texto)
+    texto = re.sub(r"\bC/\s*(?=[A-Z])", "COM ", texto)
+    texto = re.sub(r"\bS/\s*(?=[A-Z])", "SEM ", texto)
     texto = re.sub(r"[^A-Z0-9]+", " ", texto)
 
-    palavras = [ABREVIACOES.get(p, p) for p in texto.split()]
+    # "LT" é leite só como primeira palavra ("LT INTEGRAL"); no fim é lata ("CERV X LT 350ML")
+    palavras = [("LEITE" if p == "LT" and i == 0 else ABREVIACOES.get(p, p)) for i, p in enumerate(texto.split())]
     palavras = [p for p in palavras if p not in MARCAS and p not in STOPWORDS]
     if palavras and palavras[0] in SINONIMOS_TIPO:
         palavras[:1] = SINONIMOS_TIPO[palavras[0]].split()

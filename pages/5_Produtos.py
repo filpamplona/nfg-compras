@@ -73,7 +73,7 @@ with tab_comparar:
                     melhor = comp.iloc[0]
                     st.success(f"Mais barato: {melhor['loja']} — {formatar_brl(melhor['ultimo_preco'])}{sufixo}")
                 st.dataframe(pd.DataFrame({
-                    "Loja": comp["loja"], "Último preço": comp["ultimo_preco"].map(formatar_brl),
+                    "Loja": comp["loja"], "Último preço (R$/kg)" if sufixo else "Último preço": comp["ultimo_preco"].map(formatar_brl),
                     "Data": comp["ultima_data"], "Descrição na loja": comp["descricao_original"],
                     "Diferença (R$)": comp["dif_reais"].map(formatar_brl),
                     "Diferença (%)": comp["dif_pct"].map(lambda x: f"{x:.1f}%"),
@@ -122,7 +122,7 @@ with tab_pendentes:
             if not sugestoes:
                 st.caption("Sem sugestões.")
             for i, s in enumerate(sugestoes):
-                if st.button(f"{s.nome} ({s.motivo})", key=f"vincular_sug_{i}"):
+                if st.button(f"{s.nome} — {s.score:.0f} pts ({s.motivo})", key=f"vincular_sug_{i}"):
                     vincular(conn, cnpj, codigo, s.produto_id)
                     concluir("success", f"Vinculado a \"{s.nome}\".")
             cat = catalogo_df(conn)

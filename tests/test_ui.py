@@ -545,3 +545,37 @@ def test_produtos_desvincular_nao_e_desfeito_no_rerun():
     at = AppTest.from_file(PRODUTOS, default_timeout=30).run()  # novo rerun (auto roda de novo)
     assert not at.exception
     assert conn.execute("SELECT COUNT(*) FROM produto_vinculo").fetchone()[0] == 1
+
+
+def test_produtos_sugestao_mostra_score():
+    import re
+    from nfg.produtos import criar_produto, pendentes_df
+    from nfg.produtos_texto import sugerir_nome
+    conn = _conn()
+    p = pendentes_df(conn).iloc[0]
+    nome, tipo, tam, venda = sugerir_nome(p["descricao"], p["unidade"])
+    criar_produto(conn, nome, tipo, tam, venda)
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _selecionar_pendente(at)
+    assert re.search(r"\d", at.button(key="vincular_sug_0").label)
+
+
+def test_produtos_comparar_kg_mostra_sufixo_nos_precos():
+    from datetime import datetime
+    from nfg.config import abrir_repo
+    from nfg.models import Estabelecimento
+    from nfg.produtos import criar_produto, vincular
+    from tests.conftest import item, nota
+    repo = abrir_repo()
+    conn = repo.conn
+    a, b = Estabelecimento("11111111000111", "LOJA A"), Estabelecimento("22222222000122", "LOJA B")
+    repo.salvar_nota(nota("8" * 44, a, datetime(2026, 9, 5, 10, 0), "6.00", [item(1, "K1", "BANANA", "1", "KG", "6.00")]))
+    repo.salvar_nota(nota("7" * 44, b, datetime(2026, 9, 6, 10, 0), "5.00", [item(1, "K2", "BANANA", "1", "KG", "5.00")]))
+    pid = criar_produto(conn, "BANANA KG", "BANANA", None, "KG")
+    vincular(conn, a.cnpj, "K1", pid)
+    vincular(conn, b.cnpj, "K2", pid)
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    at.selectbox(key="produto_comparar").select(pid).run()
+    assert not at.exception
+    colunas = [c for d in at.dataframe for c in d.value.columns]
+    assert "Último preço (R$/kg)" in colunas
