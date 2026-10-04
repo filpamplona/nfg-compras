@@ -8,7 +8,7 @@ import pandas as pd
 
 from nfg.analises import _VALIDA, _emissao, _unificar_loja, _vazio
 from nfg.erros import ProdutoDuplicado
-from nfg.produtos_texto import normalizar_produto, pontuar
+from nfg.produtos_texto import normalizar_produto, normalizar_unidade, pontuar
 from nfg.util import normalizar_texto
 
 _CAMPOS = {"nome", "tipo", "tamanho", "venda"}
@@ -54,12 +54,16 @@ def atualizar_produto(conn: sqlite3.Connection, produto_id: int, **campos) -> No
 def excluir_produto(conn: sqlite3.Connection, produto_id: int) -> None:
     with conn:
         conn.execute("DELETE FROM produto_vinculo WHERE produto_id = ?", (produto_id,))
+        conn.execute("DELETE FROM produto_rejeitado WHERE produto_id = ?", (produto_id,))
         conn.execute("DELETE FROM produtos WHERE id = ?", (produto_id,))
 
 
 def vincular(conn: sqlite3.Connection, cnpj: str, codigo: str, produto_id: int, origem: str = "manual") -> None:
     with conn:
         conn.execute("DELETE FROM produto_ignorado WHERE cnpj = ? AND codigo = ?", (cnpj, codigo))
+        if origem == "manual":
+            conn.execute("DELETE FROM produto_rejeitado WHERE cnpj = ? AND codigo = ? AND produto_id = ?",
+                         (cnpj, codigo, produto_id))
         conn.execute(
             """INSERT INTO produto_vinculo(cnpj, codigo, produto_id, origem) VALUES (?,?,?,?)
                ON CONFLICT(cnpj, codigo) DO UPDATE SET
@@ -70,6 +74,11 @@ def vincular(conn: sqlite3.Connection, cnpj: str, codigo: str, produto_id: int, 
 
 def desvincular(conn: sqlite3.Connection, cnpj: str, codigo: str) -> None:
     with conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO produto_rejeitado(cnpj, codigo, produto_id)
+               SELECT cnpj, codigo, produto_id FROM produto_vinculo WHERE cnpj = ? AND codigo = ?""",
+            (cnpj, codigo),
+        )
         conn.execute("DELETE FROM produto_vinculo WHERE cnpj = ? AND codigo = ?", (cnpj, codigo))
 
 
@@ -219,10 +228,13 @@ def vincular_automaticos(conn: sqlite3.Connection) -> int:
     if recentes.empty:
         return 0
     desc = {(r.cnpj, r.codigo): r.descricao for r in recentes.itertuples(index=False)}
+    unidades = {(r.cnpj, r.codigo): r.unidade for r in recentes.itertuples(index=False)}
+    vendas = {r[0]: r[1] for r in conn.execute("SELECT id, venda FROM produtos")}
     total = 0
     while True:
         vinculos = {(r[0], r[1]): r[2] for r in conn.execute("SELECT cnpj, codigo, produto_id FROM produto_vinculo")}
         ignorados = _pares(conn, "produto_ignorado")
+        rejeitados = {(r[0], r[1], r[2]) for r in conn.execute("SELECT cnpj, codigo, produto_id FROM produto_rejeitado")}
         por_codigo: dict[tuple[str, str], set[tuple[str, int]]] = {}
         por_desc: dict[str, set[int]] = {}
         for (cnpj, codigo), pid in vinculos.items():
@@ -234,10 +246,14 @@ def vincular_automaticos(conn: sqlite3.Connection) -> int:
             if (cnpj, codigo) in vinculos or (cnpj, codigo) in ignorados:
                 continue
             cands = {p for c, p in por_codigo.get((cnpj[:8], codigo), ()) if c != cnpj}
+            cands = {p for p in cands if (cnpj, codigo, p) not in rejeitados}
             if cands:
                 pid = _unico(cands)  # ambíguo: pula a chave, sem cair na regra 2
             else:
-                pid = _unico(por_desc.get(_chave_descricao(descricao), set()))
+                venda = "KG" if normalizar_unidade(unidades[(cnpj, codigo)]) == "KG" else "UN"
+                por_desc_ok = {p for p in por_desc.get(_chave_descricao(descricao), set())
+                               if (cnpj, codigo, p) not in rejeitados and vendas.get(p) == venda}
+                pid = _unico(por_desc_ok)
             if pid is not None:
                 novos.append((cnpj, codigo, pid))
         if not novos:
@@ -253,6 +269,20 @@ _COL_HISTORICO = ["emissao", "loja", "valor_unitario", "descricao"]
 _COL_VISAO = ["produto_id", "produto", "venda", "loja_mais_barata", "menor_preco", "maior_preco", "dif_pct"]
 
 
+def _rotular_lojas(df: pd.DataFrame) -> pd.DataFrame:
+    """Lojas (CNPJs) distintas com o mesmo nome ganham o sufixo ` (filial)` (dígitos 9-12 do CNPJ)."""
+    if df.empty:
+        return df
+    por_nome = df.drop_duplicates("cnpj").groupby("loja")["cnpj"].nunique()
+    repetidos = set(por_nome[por_nome > 1].index)
+    if not repetidos:
+        return df
+    df = df.copy()
+    mascara = df["loja"].isin(repetidos)
+    df.loc[mascara, "loja"] = df.loc[mascara, "loja"] + " (" + df.loc[mascara, "cnpj"].str[8:12] + ")"
+    return df
+
+
 def _itens_do_produto(conn: sqlite3.Connection, produto_id: int | None = None) -> pd.DataFrame:
     """Itens válidos vinculados a produtos (todos, ou só `produto_id`), com a coluna produto_id."""
     filtro, params = ("WHERE produto_id = ?", (produto_id,)) if produto_id is not None else ("", ())
@@ -263,7 +293,7 @@ def _itens_do_produto(conn: sqlite3.Connection, produto_id: int | None = None) -
     itens = _itens_chaveados(conn)
     if vinculos.empty or itens.empty:
         return _vazio(["produto_id", *_COL_ITENS_CHAVEADOS])
-    return itens.merge(vinculos, on=["cnpj", "codigo"], how="inner")
+    return _rotular_lojas(itens.merge(vinculos, on=["cnpj", "codigo"], how="inner"))
 
 
 def _ultimo_por_loja(itens: pd.DataFrame) -> pd.DataFrame:

@@ -217,3 +217,82 @@ def test_pendentes_usa_a_ultima_compra_inteira(repo_produtos):
     r = pendentes_df(repo_produtos.conn).set_index(["cnpj", "codigo"]).loc[(repo_produtos.zaf, "103")]
     assert r.compras == 2 and r.ultimo_preco == 13.50
     assert r.unidade is None or r.unidade != r.unidade
+
+
+def _rejeitados(c):
+    return {tuple(r) for r in c.execute("SELECT cnpj, codigo, produto_id FROM produto_rejeitado")}
+
+
+def _pendente(c, cnpj, codigo):
+    return (cnpj, codigo) in set(pendentes_df(c)[["cnpj", "codigo"]].itertuples(index=False, name=None))
+
+
+def test_desvincular_nao_e_desfeito_pelo_auto_regra_codigo(repo_produtos):
+    c, r = repo_produtos.conn, repo_produtos
+    p = _muss(r)
+    vincular(c, r.zaf, "101", p)
+    vincular_automaticos(c)
+    assert _n(c, "SELECT produto_id FROM produto_vinculo WHERE cnpj=? AND codigo='101'", r.zaf2) == p
+    desvincular(c, r.zaf2, "101")
+    assert _rejeitados(c) == {(r.zaf2, "101", p)}
+    vincular_automaticos(c)
+    assert _n(c, "SELECT COUNT(*) FROM produto_vinculo WHERE cnpj=? AND codigo='101'", r.zaf2) == 0
+    assert _pendente(c, r.zaf2, "101")
+
+
+def test_desvincular_a_origem_manual_nao_religa(repo_produtos):
+    c, r = repo_produtos.conn, repo_produtos
+    p = _muss(r)
+    vincular(c, r.zaf, "101", p)
+    vincular_automaticos(c)
+    desvincular(c, r.zaf, "101")
+    vincular_automaticos(c)
+    assert _n(c, "SELECT COUNT(*) FROM produto_vinculo WHERE cnpj=? AND codigo='101'", r.zaf) == 0
+    assert _pendente(c, r.zaf, "101")
+
+
+def test_desvincular_nao_e_desfeito_pelo_auto_regra_descricao(repo_produtos):
+    c, r = repo_produtos.conn, repo_produtos
+    repo_produtos.salvar_nota(nota("9" * 44, Estabelecimento(r.zaf, 'CIA ZAFFARI'), datetime(2026, 9, 28, 10, 0), "50.00", [
+        item(1, "999", "QJO MUSSARELA S.CLARA FAT 1KG *", "1", "UN", "50.00")]))
+    p = _muss(r)
+    vincular(c, r.zaf, "101", p)
+    vincular_automaticos(c)
+    assert _n(c, "SELECT COUNT(*) FROM produto_vinculo WHERE cnpj=? AND codigo='999'", r.zaf) == 1
+    desvincular(c, r.zaf, "999")
+    vincular_automaticos(c)
+    assert _n(c, "SELECT COUNT(*) FROM produto_vinculo WHERE cnpj=? AND codigo='999'", r.zaf) == 0
+    assert _pendente(c, r.zaf, "999")
+
+
+def test_vincular_manual_apos_rejeicao_limpa_a_rejeicao(repo_produtos):
+    c, r = repo_produtos.conn, repo_produtos
+    p = _muss(r)
+    vincular(c, r.zaf, "101", p)
+    vincular_automaticos(c)
+    desvincular(c, r.zaf2, "101")
+    vincular(c, r.zaf2, "101", p)
+    assert _rejeitados(c) == set()
+    assert _n(c, "SELECT origem FROM produto_vinculo WHERE cnpj=? AND codigo='101'", r.zaf2) == "manual"
+
+
+def test_excluir_produto_remove_rejeicoes(repo_produtos):
+    c, r = repo_produtos.conn, repo_produtos
+    p = _muss(r)
+    vincular(c, r.zaf, "101", p)
+    desvincular(c, r.zaf, "101")
+    assert _rejeitados(c)
+    excluir_produto(c, p)
+    assert _rejeitados(c) == set()
+
+
+def test_auto_descricao_com_venda_diferente_nao_liga(repo_produtos):
+    c, r = repo_produtos.conn, repo_produtos
+    repo_produtos.salvar_nota(nota("c" * 44, Estabelecimento(r.atac, 'ATACADAO S.A.'), datetime(2026, 9, 28, 10, 0), "9.00", [
+        item(1, "777", "MACA FUJI", "1", "KG", "9.00")]))
+    repo_produtos.salvar_nota(nota("d" * 44, Estabelecimento(r.zaf, 'CIA ZAFFARI'), datetime(2026, 9, 28, 10, 0), "9.00", [
+        item(1, "888", "MACA FUJI", "1", "UN", "9.00")]))
+    p = criar_produto(c, "MACA FUJI", "MACA FUJI", None, "KG")
+    vincular(c, r.atac, "777", p)
+    vincular_automaticos(c)
+    assert _n(c, "SELECT COUNT(*) FROM produto_vinculo WHERE cnpj=? AND codigo='888'", r.zaf) == 0

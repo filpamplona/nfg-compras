@@ -83,3 +83,30 @@ def test_produto_sem_vinculos(repo_produtos):
     hist = historico_produto(repo_produtos.conn, pid)
     assert comp.empty and list(comp.columns) == COL_COMPARAR
     assert hist.empty and list(hist.columns) == COL_HISTORICO
+
+
+@pytest.fixture
+def mesma_razao(vinculado):
+    with vinculado.conn:
+        vinculado.conn.execute("UPDATE estabelecimentos SET razao_social = 'CIA ZAFFARI', nome_csv = 'CIA ZAFFARI' "
+                               "WHERE cnpj IN (?, ?)", (vinculado.zaf, vinculado.zaf2))
+    return vinculado
+
+
+def test_lojas_mesmo_nome_ganham_sufixo_do_cnpj(mesma_razao):
+    r = mesma_razao
+    df = comparar_produto(r.conn, r.muss).set_index("cnpj")
+    assert df.loc[r.zaf, "loja"] == f"CIA ZAFFARI ({r.zaf[8:12]})"
+    assert df.loc[r.zaf2, "loja"] == f"CIA ZAFFARI ({r.zaf2[8:12]})"
+    assert df.loc[r.zaf, "loja"] != df.loc[r.zaf2, "loja"]
+    assert df.loc[r.atac, "loja"] == "ATACADAO S.A."  # nome unico: sem sufixo
+    hist = historico_produto(r.conn, r.muss)
+    assert set(hist["loja"]) == set(df["loja"])
+
+
+def test_visao_geral_usa_rotulo_com_sufixo(mesma_razao):
+    r = mesma_razao
+    with r.conn:
+        r.conn.execute("UPDATE itens SET valor_unitario = '1.00' WHERE chave = ?", ("7" * 44,))
+    df = visao_geral_df(r.conn).set_index("produto_id")
+    assert df.loc[r.muss, "loja_mais_barata"] == f"CIA ZAFFARI ({r.zaf2[8:12]})"

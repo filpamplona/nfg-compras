@@ -519,3 +519,29 @@ def test_catalogo_erro_nao_aplica_exclusoes():
     assert at.error
     assert _nomes() == ["AAA", "BBB", "CCC"]
     assert at.session_state["editor_catalogo"]["deleted_rows"] == [2]
+
+
+def test_produtos_desvincular_nao_e_desfeito_no_rerun():
+    from datetime import datetime
+    from nfg.config import abrir_repo
+    from nfg.produtos import pendentes_df, vincular, vincular_automaticos
+    from tests.conftest import item, nota
+    repo = abrir_repo()
+    conn = repo.conn
+    p = pendentes_df(conn).iloc[0]
+    from nfg.models import Estabelecimento
+    repo.salvar_nota(nota("9" * 44, Estabelecimento(p["cnpj"], p["loja"]), datetime(2026, 9, 28, 10, 0), "1.00",
+                          [item(1, "ZZ9", p["descricao"], "1", "UN", "1.00")]))
+    (pid,) = _catalogo_com("AAA")
+    vincular(conn, p["cnpj"], p["codigo"], pid)
+    assert vincular_automaticos(conn) == 1  # ZZ9 entra por descricao identica
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    at.session_state["tabela_catalogo"] = {"selection": {"rows": [0], "columns": []}}
+    at.run()
+    at.button(key="desvincular_0").click()
+    at.session_state["tabela_catalogo"] = {"selection": {"rows": [0], "columns": []}}
+    at.run()
+    assert not at.exception
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()  # novo rerun (auto roda de novo)
+    assert not at.exception
+    assert conn.execute("SELECT COUNT(*) FROM produto_vinculo").fetchone()[0] == 1

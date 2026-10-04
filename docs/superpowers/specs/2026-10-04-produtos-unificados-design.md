@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS produto_ignorado (
   codigo TEXT NOT NULL,
   PRIMARY KEY (cnpj, codigo)
 );
+CREATE TABLE IF NOT EXISTS produto_rejeitado (   -- pares (item, produto) desfeitos pelo usuário
+  cnpj TEXT NOT NULL,
+  codigo TEXT NOT NULL,
+  produto_id INTEGER NOT NULL REFERENCES produtos(id) ON DELETE CASCADE,
+  PRIMARY KEY (cnpj, codigo, produto_id)
+);
 ```
 
 - **Chave do item:** `(cnpj_emitente, codigo)`. Item sem `codigo` usa `codigo = 'DESC:' || descricao_norm`
@@ -165,7 +171,16 @@ Nome duplicado levanta `ProdutoDuplicado` (em `nfg/erros.py`).
 
 `vincular_automaticos` liga, com `origem='auto'`, apenas itens pendentes que:
 1. têm o mesmo `codigo` de um item já vinculado em outro CNPJ com a **mesma raiz** (8 primeiros dígitos);
-2. têm descrição **idêntica após `normalizar_texto` sem pontuação/asteriscos** a uma descrição já vinculada.
+2. têm descrição **idêntica após `normalizar_texto` sem pontuação/asteriscos** a uma descrição já vinculada
+   (e o produto tem a mesma `venda` do item: KG ou UN).
+
+`desvincular` registra (cnpj, codigo, produto_id) em `produto_rejeitado`; `vincular_automaticos` nunca liga uma
+chave a um produto rejeitado para ela (a candidata é descartada em ambas as regras), de modo que desvincular
+na UI não é desfeito no rerun seguinte. `vincular(..., origem="manual")` apaga a rejeição correspondente
+(vínculo explícito vence) e `excluir_produto` remove as rejeições do produto.
+
+Quando dois ou mais CNPJs de um resultado têm o mesmo nome de loja, o rótulo vira `"<loja> (<dígitos 9-12 do
+CNPJ>)"` (só para essas linhas) em `comparar_produto`, `historico_produto` e `visao_geral_df`.
 
 ### 5.4 Consultas (DataFrames)
 

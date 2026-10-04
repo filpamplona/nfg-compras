@@ -81,6 +81,12 @@ CREATE TABLE IF NOT EXISTS produto_ignorado (
   codigo TEXT NOT NULL,
   PRIMARY KEY (cnpj, codigo)
 );
+CREATE TABLE IF NOT EXISTS produto_rejeitado (
+  cnpj TEXT NOT NULL,
+  codigo TEXT NOT NULL,
+  produto_id INTEGER NOT NULL REFERENCES produtos(id) ON DELETE CASCADE,
+  PRIMARY KEY (cnpj, codigo, produto_id)
+);
 """
 
 
