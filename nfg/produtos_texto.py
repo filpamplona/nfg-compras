@@ -3,6 +3,7 @@
 Funções puras (sem banco). Ampliar os dicionários abaixo é a forma de melhorar as sugestões.
 """
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -233,3 +234,30 @@ def sugerir_nome(descricao: str, unidade: str | None) -> tuple[str, str, str | N
     # tamanho escolhido antes dos secundários, para que renormalizar o nome o escolha de novo
     nome = " ".join((*regulares, *([tamanho] if tamanho else []), *secundarios))
     return nome, a.tipo, tamanho, a.venda
+
+
+def pontuar(item: Assinatura, produto: Assinatura, similares: Sequence[Assinatura] = ()) -> tuple[float, str] | None:
+    """Pontua (0-100) a compatibilidade item x produto; None = veto."""
+    if not item.tipo or not produto.tipo:
+        return None
+    palavras_item, palavras_produto = item.tipo.split(), produto.tipo.split()
+    if palavras_item[0] != palavras_produto[0] or item.venda != produto.venda:
+        return None
+    if item.tamanho and produto.tamanho and item.tamanho != produto.tamanho:
+        return None
+
+    def jaccard(s: Assinatura) -> float:
+        uniao = item.tokens | s.tokens
+        return 70 * len(item.tokens & s.tokens) / len(uniao) if uniao else 0.0
+
+    score = max(jaccard(s) for s in (produto, *similares))
+    motivos = ["mesmo tipo"]
+    if len(palavras_item) > 1 and len(palavras_produto) > 1 and palavras_item[1] == palavras_produto[1]:
+        score += 20
+        motivos.append("mesmo qualificador")
+    if item.tamanho and item.tamanho == produto.tamanho:
+        score += 10
+        motivos.append("mesmo tamanho")
+    else:
+        motivos.append("tamanho não informado")
+    return round(score, 2), "; ".join(motivos)

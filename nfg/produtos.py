@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 
+from nfg.analises import _VALIDA
 from nfg.erros import ProdutoDuplicado
+from nfg.produtos_texto import normalizar_produto, pontuar
 from nfg.util import normalizar_texto
 
 _CAMPOS = {"nome", "tipo", "tamanho", "venda"}
@@ -76,3 +79,51 @@ def ignorar(conn: sqlite3.Connection, cnpj: str, codigo: str) -> None:
 def restaurar(conn: sqlite3.Connection, cnpj: str, codigo: str) -> None:
     with conn:
         conn.execute("DELETE FROM produto_ignorado WHERE cnpj = ? AND codigo = ?", (cnpj, codigo))
+
+
+@dataclass(frozen=True)
+class Sugestao:
+    produto_id: int
+    nome: str
+    score: float
+    motivo: str
+
+
+def _descricoes_vinculadas(conn: sqlite3.Connection) -> dict[int, list[tuple[str, str | None]]]:
+    """Descrição mais recente (e unidade) de cada item vinculado, agrupada por produto."""
+    vinculos = {(r[0], r[1]): r[2] for r in conn.execute("SELECT cnpj, codigo, produto_id FROM produto_vinculo")}
+    if not vinculos:
+        return {}
+    recentes: dict[tuple[str, str], tuple[tuple, str, str | None]] = {}
+    linhas = conn.execute(
+        f"""SELECT n.cnpj_emitente, i.codigo, i.descricao, i.unidade, n.emissao, n.chave, i.seq
+            FROM itens i JOIN notas n ON n.chave = i.chave
+            WHERE {_VALIDA}"""
+    )
+    for cnpj, codigo, descricao, unidade, emissao, chave, seq in linhas:
+        k = chave_item(cnpj, codigo, descricao)
+        if k not in vinculos:
+            continue
+        ordem = (emissao, chave, seq)
+        if k not in recentes or ordem > recentes[k][0]:
+            recentes[k] = (ordem, descricao, unidade)
+    por_produto: dict[int, list[tuple[str, str | None]]] = {}
+    for k, (_, descricao, unidade) in recentes.items():
+        por_produto.setdefault(vinculos[k], []).append((descricao, unidade))
+    return por_produto
+
+
+def sugerir(conn: sqlite3.Connection, descricao: str, unidade: str | None, n: int = 3) -> list[Sugestao]:
+    item = normalizar_produto(descricao, unidade)
+    if not item.tipo:
+        return []
+    similares = _descricoes_vinculadas(conn)
+    sugestoes = []
+    for pid, nome, tamanho, venda in conn.execute("SELECT id, nome, tamanho, venda FROM produtos"):
+        produto = normalizar_produto(f"{nome} {tamanho or ''}", venda)
+        sims = [normalizar_produto(d, u) for d, u in similares.get(pid, [])]
+        resultado = pontuar(item, produto, sims)
+        if resultado and resultado[0] > 0:
+            sugestoes.append(Sugestao(pid, nome, resultado[0], resultado[1]))
+    sugestoes.sort(key=lambda s: (-s.score, s.nome))
+    return sugestoes[:n]
