@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 
-from nfg.analises import _VALIDA
+import pandas as pd
+
+from nfg.analises import _VALIDA, _emissao, _unificar_loja, _vazio
 from nfg.erros import ProdutoDuplicado
 from nfg.produtos_texto import normalizar_produto, pontuar
 from nfg.util import normalizar_texto
@@ -89,27 +92,49 @@ class Sugestao:
     motivo: str
 
 
+_COL_ITENS_CHAVEADOS = ["cnpj", "codigo", "loja", "emissao", "descricao", "unidade", "valor_unitario"]
+
+
+def _itens_chaveados(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Itens de notas válidas com `codigo` já na chave de vínculo, ordenados do mais antigo ao mais recente."""
+    linhas = conn.execute(
+        f"""SELECT n.cnpj_emitente, i.codigo, COALESCE(e.razao_social, e.nome_csv), n.emissao,
+                   i.descricao, i.unidade, i.valor_unitario
+            FROM itens i JOIN notas n ON n.chave = i.chave
+            LEFT JOIN estabelecimentos e ON e.cnpj = n.cnpj_emitente
+            WHERE {_VALIDA}
+            ORDER BY n.emissao, n.chave, i.seq"""
+    ).fetchall()
+    if not linhas:
+        return _vazio(_COL_ITENS_CHAVEADOS)
+    linhas = [(cnpj, chave_item(cnpj, codigo, descricao)[1], loja, emissao, descricao, unidade, vu)
+              for cnpj, codigo, loja, emissao, descricao, unidade, vu in linhas]
+    df = pd.DataFrame(linhas, columns=_COL_ITENS_CHAVEADOS)
+    df["emissao"] = _emissao(df["emissao"])
+    df["valor_unitario"] = df["valor_unitario"].astype(float)
+    return _unificar_loja(df)
+
+
+def _recentes(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Última linha (compra mais recente) de cada (cnpj, codigo), com a contagem de compras."""
+    itens = _itens_chaveados(conn)
+    if itens.empty:
+        return itens.assign(compras=pd.Series(dtype=int))
+    compras = itens.groupby(["cnpj", "codigo"]).size().rename("compras")
+    ultimo = itens.groupby(["cnpj", "codigo"], as_index=False).last()
+    return ultimo.merge(compras, on=["cnpj", "codigo"])
+
+
 def _descricoes_vinculadas(conn: sqlite3.Connection) -> dict[int, list[tuple[str, str | None]]]:
     """Descrição mais recente (e unidade) de cada item vinculado, agrupada por produto."""
     vinculos = {(r[0], r[1]): r[2] for r in conn.execute("SELECT cnpj, codigo, produto_id FROM produto_vinculo")}
     if not vinculos:
         return {}
-    recentes: dict[tuple[str, str], tuple[tuple, str, str | None]] = {}
-    linhas = conn.execute(
-        f"""SELECT n.cnpj_emitente, i.codigo, i.descricao, i.unidade, n.emissao, n.chave, i.seq
-            FROM itens i JOIN notas n ON n.chave = i.chave
-            WHERE {_VALIDA}"""
-    )
-    for cnpj, codigo, descricao, unidade, emissao, chave, seq in linhas:
-        k = chave_item(cnpj, codigo, descricao)
-        if k not in vinculos:
-            continue
-        ordem = (emissao, chave, seq)
-        if k not in recentes or ordem > recentes[k][0]:
-            recentes[k] = (ordem, descricao, unidade)
     por_produto: dict[int, list[tuple[str, str | None]]] = {}
-    for k, (_, descricao, unidade) in recentes.items():
-        por_produto.setdefault(vinculos[k], []).append((descricao, unidade))
+    for r in _recentes(conn).itertuples(index=False):
+        pid = vinculos.get((r.cnpj, r.codigo))
+        if pid is not None:
+            por_produto.setdefault(pid, []).append((r.descricao, r.unidade))
     return por_produto
 
 
@@ -127,3 +152,94 @@ def sugerir(conn: sqlite3.Connection, descricao: str, unidade: str | None, n: in
             sugestoes.append(Sugestao(pid, nome, resultado[0], resultado[1]))
     sugestoes.sort(key=lambda s: (-s.score, s.nome))
     return sugestoes[:n]
+
+
+def _pares(conn: sqlite3.Connection, tabela: str) -> set[tuple[str, str]]:
+    return {(r[0], r[1]) for r in conn.execute(f"SELECT cnpj, codigo FROM {tabela}")}
+
+
+def pendentes_df(conn: sqlite3.Connection) -> pd.DataFrame:
+    colunas = ["cnpj", "codigo", "loja", "descricao", "unidade", "ultimo_preco", "ultima_data", "compras"]
+    df = _recentes(conn)
+    if df.empty:
+        return _vazio(colunas)
+    fora = _pares(conn, "produto_vinculo") | _pares(conn, "produto_ignorado")
+    df = df[[(c, k) not in fora for c, k in zip(df["cnpj"], df["codigo"])]]
+    df = df.rename(columns={"valor_unitario": "ultimo_preco", "emissao": "ultima_data"})
+    df = df.sort_values(["compras", "descricao"], ascending=[False, True], kind="stable")
+    return df[colunas].reset_index(drop=True)
+
+
+def catalogo_df(conn: sqlite3.Connection) -> pd.DataFrame:
+    return pd.read_sql_query(
+        """SELECT p.id, p.nome, p.tipo, p.tamanho, p.venda,
+                  COUNT(DISTINCT v.cnpj) AS lojas, COUNT(v.codigo) AS vinculos
+           FROM produtos p LEFT JOIN produto_vinculo v ON v.produto_id = p.id
+           GROUP BY p.id ORDER BY p.nome""",
+        conn,
+    )
+
+
+def _com_descricao(conn: sqlite3.Connection, pares: list[tuple]) -> pd.DataFrame:
+    """Anexa loja e descrição mais recente a linhas (cnpj, codigo, *extras)."""
+    recentes = _recentes(conn)[["cnpj", "codigo", "loja", "descricao"]]
+    df = pd.DataFrame(pares, columns=["cnpj", "codigo", *(["origem"] if pares and len(pares[0]) > 2 else [])])
+    return df.merge(recentes, on=["cnpj", "codigo"], how="left")
+
+
+def vinculos_df(conn: sqlite3.Connection, produto_id: int) -> pd.DataFrame:
+    colunas = ["cnpj", "codigo", "loja", "descricao", "origem"]
+    pares = conn.execute(
+        "SELECT cnpj, codigo, origem FROM produto_vinculo WHERE produto_id = ?", (produto_id,)
+    ).fetchall()
+    if not pares:
+        return _vazio(colunas)
+    return _com_descricao(conn, pares)[colunas].sort_values(["loja", "descricao"]).reset_index(drop=True)
+
+
+def ignorados_df(conn: sqlite3.Connection) -> pd.DataFrame:
+    colunas = ["cnpj", "codigo", "loja", "descricao"]
+    pares = conn.execute("SELECT cnpj, codigo FROM produto_ignorado").fetchall()
+    if not pares:
+        return _vazio(colunas)
+    return _com_descricao(conn, pares)[colunas].sort_values(["loja", "descricao"]).reset_index(drop=True)
+
+
+def _chave_descricao(descricao: str) -> str:
+    return " ".join(re.sub(r"[^A-Z0-9 ]", "", normalizar_texto(descricao).upper()).split())
+
+
+def _unico(candidatos: set[int]) -> int | None:
+    return next(iter(candidatos)) if len(candidatos) == 1 else None
+
+
+def vincular_automaticos(conn: sqlite3.Connection) -> int:
+    """Liga pendentes por mesmo código na mesma raiz de CNPJ ou descrição idêntica normalizada."""
+    recentes = _recentes(conn)
+    if recentes.empty:
+        return 0
+    desc = {(r.cnpj, r.codigo): r.descricao for r in recentes.itertuples(index=False)}
+    total = 0
+    while True:
+        vinculos = {(r[0], r[1]): r[2] for r in conn.execute("SELECT cnpj, codigo, produto_id FROM produto_vinculo")}
+        ignorados = _pares(conn, "produto_ignorado")
+        por_codigo: dict[tuple[str, str], set[tuple[str, int]]] = {}
+        por_desc: dict[str, set[int]] = {}
+        for (cnpj, codigo), pid in vinculos.items():
+            por_codigo.setdefault((cnpj[:8], codigo), set()).add((cnpj, pid))
+            if (cnpj, codigo) in desc:
+                por_desc.setdefault(_chave_descricao(desc[(cnpj, codigo)]), set()).add(pid)
+        novos = []
+        for (cnpj, codigo), descricao in desc.items():
+            if (cnpj, codigo) in vinculos or (cnpj, codigo) in ignorados:
+                continue
+            pid = _unico({p for c, p in por_codigo.get((cnpj[:8], codigo), ()) if c != cnpj})
+            if pid is None:
+                pid = _unico(por_desc.get(_chave_descricao(descricao), set()))
+            if pid is not None:
+                novos.append((cnpj, codigo, pid))
+        if not novos:
+            return total
+        for cnpj, codigo, pid in novos:
+            vincular(conn, cnpj, codigo, pid, origem="auto")
+        total += len(novos)
