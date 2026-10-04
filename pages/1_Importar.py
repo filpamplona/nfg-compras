@@ -9,7 +9,9 @@ import streamlit as st
 from nfg import csv_import
 from nfg.coleta import anexar_xml, coletar, reprocessar_html
 from nfg.config import abrir_repo, html_dir
+from nfg.produtos import pendentes_df, vincular_automaticos
 from nfg.erros import CSVInvalido, ErroNFG, LayoutDesconhecido
+from nfg.produtos import pendentes_df, vincular_automaticos
 from nfg.sefaz_client import SefazClient
 from nfg.util import formatar_brl
 
@@ -17,6 +19,14 @@ st.set_page_config(page_title="NFG Compras", page_icon="🧾", layout="wide")
 repo = abrir_repo()
 
 st.title("Importar")
+
+
+def avisar_vinculos() -> None:
+    vincular_automaticos(repo.conn)
+    k = len(pendentes_df(repo.conn))
+    if k > 0:
+        st.info(f"{k} itens aguardando vínculo em Produtos")
+
 
 # --- CSV ---
 st.subheader("1. Relatório CSV da Nota Fiscal Gaúcha")
@@ -41,19 +51,24 @@ if arquivo is not None:
             r = repo.importar_resumos(res.resumos)
             st.success(f"{r['novas']} novas, {r['existentes']} já existentes, "
                        f"{r['nfe']} NF-e aguardando XML, {len(res.invalidas)} inválidas")
+            avisar_vinculos()
 
 # --- XML ---
 st.subheader("2. XML de NF-e (modelo 55)")
 xmls = st.file_uploader("Arquivos XML", type=["xml"], accept_multiple_files=True, key="xml")
 if xmls and st.button("Anexar XMLs"):
+    anexou = False
     for f in xmls:
         try:
             nota = anexar_xml(repo, f.getvalue())
             st.success(f"{f.name}: nota {nota.chave} anexada")
+            anexou = True
         except LayoutDesconhecido as e:
             st.error(f"{f.name}: não foi possível ler este XML ({e}).")
         except ErroNFG as e:
             st.error(f"{f.name}: {e}")
+    if anexou:
+        avisar_vinculos()
 
 # --- Coleta ---
 st.subheader("3. Coleta na SEFAZ")
@@ -71,7 +86,9 @@ if st.button(f"Baixar notas pendentes ({n_pend})", disabled=n_pend == 0, type="p
         st.error(f"Coleta interrompida: {lote.motivo}. Tente mais tarde.")
     else:
         st.success(f"{lote.coletadas} notas coletadas, {lote.erros} com erro.")
+    avisar_vinculos()
 
 if st.button("Reprocessar HTMLs salvos"):
     lote = reprocessar_html(repo, html_dir())
     st.success(f"{lote.coletadas} reprocessadas, {lote.erros} com erro.")
+    avisar_vinculos()

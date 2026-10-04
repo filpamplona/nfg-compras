@@ -14,7 +14,8 @@ def dados(tmp_path, monkeypatch, nota_zaffari):
 
 
 @pytest.mark.parametrize("arquivo", ["app.py", "pages/1_Importar.py", "pages/2_Notas.py",
-                                     "pages/3_Análises.py", "pages/4_Categorias.py"])
+                                     "pages/3_Análises.py", "pages/4_Categorias.py",
+                                     "pages/5_Produtos.py"])
 def test_pagina_carrega(arquivo):
     at = AppTest.from_file(str(RAIZ / arquivo), default_timeout=30).run()
     assert not at.exception
@@ -346,3 +347,104 @@ def test_conflitos_lista_mudou_nao_grava_em_outro_produto():
     assert any("Lista de conflitos mudou" in w.value for w in at.warning)
     rows = conn.execute("SELECT codigo FROM categoria_manual").fetchall()
     assert [r[0] for r in rows] == ["S1"]
+
+
+PRODUTOS = str(RAIZ / "pages/5_Produtos.py")
+
+
+def _conn():
+    from nfg.config import abrir_repo
+    return abrir_repo().conn
+
+
+def _selecionar_pendente(at, i=0):
+    # o AppTest zera a seleção da tabela a cada run (o navegador a mantém): reaplicar antes de cada run
+    at.session_state["tabela_pendentes"] = {"selection": {"rows": [i], "columns": []}}
+    at.run()
+
+
+def _com_selecao(at, i=0):
+    at.session_state["tabela_pendentes"] = {"selection": {"rows": [i], "columns": []}}
+    return at
+
+
+def test_produtos_criar_e_vincular_pendente():
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    assert not at.exception
+    _selecionar_pendente(at)
+    at.text_input(key="novo_nome").input("PRODUTO TESTE UI")
+    _com_selecao(at).run()
+    at.button(key="criar_produto").click()
+    _com_selecao(at).run()
+    assert not at.exception
+    conn = _conn()
+    assert [r[0] for r in conn.execute("SELECT nome FROM produtos")] == ["PRODUTO TESTE UI"]
+    assert conn.execute("SELECT COUNT(*) FROM produto_vinculo").fetchone()[0] == 1
+    assert at.success
+
+
+def test_produtos_nome_duplicado_mostra_erro():
+    from nfg.produtos import criar_produto
+    conn = _conn()
+    criar_produto(conn, "PRODUTO TESTE UI", "TESTE", None, "UN")
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _selecionar_pendente(at)
+    at.text_input(key="novo_nome").input("PRODUTO TESTE UI")
+    _com_selecao(at).run()
+    at.button(key="criar_produto").click()
+    _com_selecao(at).run()
+    assert not at.exception and at.error
+    assert conn.execute("SELECT COUNT(*) FROM produtos").fetchone()[0] == 1
+
+
+def test_produtos_ignorar():
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _selecionar_pendente(at)
+    at.button(key="ignorar").click()
+    _com_selecao(at).run()
+    assert not at.exception
+    assert _conn().execute("SELECT COUNT(*) FROM produto_ignorado").fetchone()[0] == 1
+
+
+def test_produtos_vincular_sugestao():
+    from nfg.produtos import criar_produto, pendentes_df
+    from nfg.produtos_texto import sugerir_nome
+    conn = _conn()
+    p = pendentes_df(conn).iloc[0]
+    nome, tipo, tam, venda = sugerir_nome(p["descricao"], p["unidade"])
+    pid = criar_produto(conn, nome, tipo, tam, venda)
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _selecionar_pendente(at)
+    at.button(key="vincular_sug_0").click()
+    _com_selecao(at).run()
+    assert not at.exception
+    assert conn.execute("SELECT produto_id FROM produto_vinculo WHERE cnpj=? AND codigo=?",
+                        (p["cnpj"], p["codigo"])).fetchone()[0] == pid
+
+
+def test_produtos_comparar_mostra_mais_barato():
+    from datetime import datetime
+    from nfg.config import abrir_repo
+    from nfg.models import Estabelecimento
+    from nfg.produtos import criar_produto, pendentes_df, vincular
+    from tests.conftest import item, nota
+    repo = abrir_repo()
+    conn = repo.conn
+    z = pendentes_df(conn).iloc[0]
+    repo.salvar_nota(nota("9" * 44, Estabelecimento("75315333008860", "ATACADAO S.A."),
+                          datetime(2026, 9, 5, 10, 0), "0.01", [item(1, z["codigo"], z["descricao"], "1", "UN", "0.01")]))
+    pid = criar_produto(conn, "PRODUTO COMPARA", "TESTE", None, "UN")
+    vincular(conn, z["cnpj"], z["codigo"], pid)
+    vincular(conn, "75315333008860", z["codigo"], pid)
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    at.selectbox(key="produto_comparar").select(pid).run()
+    assert not at.exception
+    assert any("Mais barato" in s.value and "ATACADAO" in s.value for s in at.success)
+
+
+def test_produtos_sem_dados(tmp_path, monkeypatch):
+    monkeypatch.setenv("NFG_DATA_DIR", str(tmp_path / "vazio"))
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    assert not at.exception and at.info
+
+
