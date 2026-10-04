@@ -128,3 +128,8 @@ def test_barra_com_espaco_vira_com_sem():
     assert a.tipo == "BISCOITO COM" and "C" not in a.palavras
     b = normalizar_produto("AMENDOIM S/ SAL 200G", "UN")
     assert "SEM" in b.palavras and "S" not in b.palavras
+
+
+@pytest.mark.parametrize("un", [float("nan"), None, ""])
+def test_normalizar_unidade_ausente_vira_un(un):
+    assert normalizar_unidade(un) == "UN"

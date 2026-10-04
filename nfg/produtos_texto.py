@@ -115,7 +115,7 @@ class Assinatura:
 
 
 def normalizar_unidade(unidade: str | None) -> str:
-    if not unidade:
+    if not isinstance(unidade, str) or not unidade:  # None, "" ou NaN vindo do pandas
         return "UN"
     base = re.sub(r"\d+$", "", normalizar_texto(unidade))
     if not base:

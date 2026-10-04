@@ -296,3 +296,13 @@ def test_auto_descricao_com_venda_diferente_nao_liga(repo_produtos):
     vincular(c, r.atac, "777", p)
     vincular_automaticos(c)
     assert _n(c, "SELECT COUNT(*) FROM produto_vinculo WHERE cnpj=? AND codigo='888'", r.zaf) == 0
+
+
+def test_auto_descricao_com_unidade_nula_nao_quebra(repo_produtos):
+    c, r = repo_produtos.conn, repo_produtos
+    p = criar_produto(c, "QUEIJO MUSSARELA FATIADO 1KG", "QUEIJO MUSSARELA", "1KG", "UN")
+    vincular(c, r.zaf, "101", p)
+    repo_produtos.salvar_nota(nota("e" * 44, Estabelecimento(r.zaf, 'CIA ZAFFARI'), datetime(2026, 9, 29, 10, 0), "52.90", [
+        item(1, "999", "QJO MUSSARELA S.CLARA FAT 1KG", "1", None, "52.90")]))
+    vincular_automaticos(c)
+    assert _n(c, "SELECT COUNT(*) FROM produto_vinculo WHERE cnpj=? AND codigo='999'", r.zaf) == 1
