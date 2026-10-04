@@ -48,8 +48,9 @@ produto está mais barato.
 
 ## 4. Modelo de dados
 
-Criado pela migração **v3** (`PRAGMA user_version = 3`), atômica e idempotente como `_migrar_v1/_v2`
-em `nfg/categorias.py`; `garantir_seed` de banco novo passa a marcar `user_version = 3`.
+As tabelas entram no `SCHEMA` de `nfg/db.py` (`CREATE TABLE IF NOT EXISTS`, executado em todo
+`conectar()`), que é o mecanismo do projeto para tabelas novas: um `nfg.db` existente as ganha na próxima
+abertura, sem migração de dados e sem alterar `PRAGMA user_version` (continua 2).
 
 ```sql
 CREATE TABLE IF NOT EXISTS produtos (
@@ -80,8 +81,10 @@ CREATE TABLE IF NOT EXISTS produto_ignorado (
 
 ## 5. Arquitetura
 
-Novo módulo `nfg/produtos.py` (não importa streamlit), nova página `pages/5_Produtos.py`, ajuste pequeno
-em `pages/1_Importar.py` e migração v3 em `nfg/categorias.py` (onde está o mecanismo de `user_version`).
+Dois módulos novos (não importam streamlit): `nfg/produtos_texto.py` — funções puras de normalização,
+pontuação e nome sugerido, com os dicionários; `nfg/produtos.py` — catálogo, vínculos, sugestões e consultas
+sobre o banco. Nova página `pages/5_Produtos.py`, ajuste pequeno em `pages/1_Importar.py` e tabelas novas
+em `nfg/db.py`.
 
 ### 5.1 Normalização
 
@@ -91,7 +94,8 @@ em `pages/1_Importar.py` e migração v3 em `nfg/categorias.py` (onde está o me
 @dataclass(frozen=True)
 class Assinatura:
     tipo: str                         # "QUEIJO MUSSARELA"
-    tokens: frozenset[str]            # tokens significativos (sem marca, sem stop-words, sem tamanho)
+    palavras: tuple[str, ...]         # tokens significativos em ordem (sem marca, stop-words, tamanho)
+    tokens: frozenset[str]            # frozenset(palavras) — inclui as palavras do tipo
     tamanho: tuple[Decimal, str] | None   # (1000, "G"), (1500, "ML"), (20, "UN"), (30, "%")
     venda: str                        # "UN" | "KG"
 ```
@@ -108,7 +112,10 @@ Passos:
    INT→INTEGRAL, TRAD→TRADICIONAL, VH/VIN→VINHO, LIMP→LIMPADOR, …) e sinônimos de cabeça
    `SINONIMOS_TIPO` (OVOS→OVO, KITKAT→CHOCOLATE KIT KAT, COCA→REFRIGERANTE COCA, PAOZINHO→PAO, …).
 6. Remover tokens de marca (`MARCAS`, ~40) e stop-words (DE, DA, DO, E, AO, PACOTE, GRANEL, KG, …).
-7. `tipo` = 1º token + 2º token (quando existir); `tokens` = conjunto restante.
+7. `tipo` = 1ª + 2ª palavra (ou só a 1ª); `tokens` = todas as palavras. Sinônimos de cabeça valem só
+   para a 1ª palavra; palavras repetidas em sequência são removidas.
+   **Tamanho único por prioridade:** peso/volume > embalagem (C/20, L16) > percentual. Os não escolhidos
+   entram como palavra (`C/20`, `30%`) para ainda diferenciar no Jaccard.
 8. `venda` = `KG` se unidade normalizada for `KG` (`normalizar_unidade`: `UND9`/`UNID`/`un` → `UN`,
    `KG9`/`kg` → `KG`, `PCT\d`→`PCT`, `CXA\d`/`CAIXA`/`CX` → `CX`), senão `UN`.
 
@@ -127,8 +134,10 @@ class Sugestao:
     motivo: str       # "mesmo tipo + qualificador; tamanho não informado"
 ```
 
-A assinatura de cada produto é calculada a partir de `nome` + `venda` (nome segue o mesmo vocabulário),
-enriquecida pelos tokens das descrições já vinculadas a ele.
+A assinatura **autoritativa** do produto é `normalizar_produto(f"{nome} {tamanho or ''}", venda)`; os
+vetos usam só ela. A parte de similaridade (Jaccard + qualificador) é o **máximo** entre a assinatura do
+produto e as das descrições já vinculadas a ele (assim `QJO.MUSS.FAT.DALIA`, sem tamanho, ajuda a
+reconhecer outras descrições do Atacadão sem afrouxar o veto de tamanho).
 
 - **Vetos (score não calculado):** 1º token do tipo diferente; tamanho conhecido nos dois lados e diferente;
   `venda` diferente.
@@ -168,7 +177,7 @@ def catalogo_df(conn) -> DataFrame       # [id, nome, tipo, tamanho, venda, loja
 def vinculos_df(conn, produto_id) -> DataFrame   # [cnpj, codigo, loja, descricao, origem]
 def ignorados_df(conn) -> DataFrame      # [cnpj, codigo, loja, descricao]
 def comparar_produto(conn, produto_id) -> DataFrame
-    # [loja, ultimo_preco, ultima_data, descricao_original, dif_reais, dif_pct, mais_barato]
+    # [cnpj, loja, ultimo_preco, ultima_data, descricao_original, dif_reais, dif_pct, mais_barato]
     # uma linha por loja (CNPJ unificado como em analises._unificar_loja), ordenado por ultimo_preco
 def historico_produto(conn, produto_id) -> DataFrame    # [emissao, loja, valor_unitario, descricao]
 def visao_geral_df(conn) -> DataFrame
@@ -209,8 +218,8 @@ Mesmo padrão de `pages/4_Categorias.py` (`abrir_repo()`, `avisar()` com flash e
 ## 7. Erros e casos-limite
 
 - Nome duplicado → `ProdutoDuplicado` → `avisar(..., "error")`; nada gravado.
-- Migração v3 com `BEGIN`/`ROLLBACK`; idempotente. Recomenda-se copiar `data/nfg.db` antes da 1ª execução
-  (convenção `nfg.backup-AAAA-MM-DD.db`).
+- Tabelas novas via `CREATE TABLE IF NOT EXISTS`; dados existentes intocados. Recomenda-se copiar
+  `data/nfg.db` antes da 1ª execução (convenção `nfg.backup-AAAA-MM-DD.db`).
 - Reprocessar nota não afeta vínculos (chave `(cnpj, codigo)`).
 - Código cuja descrição mudou mantém o vínculo; telas mostram a descrição mais recente.
 - Notas canceladas/inválidas excluídas de pendentes e comparações.
@@ -229,7 +238,8 @@ Mesmo padrão de `pages/4_Categorias.py` (`abrir_repo()`, `avisar()` com flash e
   `chave_item` sem código.
 - `tests/test_produtos_comparacao.py` — `comparar_produto` (último preço por loja, mais barato, diferenças),
   venda KG, nota cancelada excluída, `historico_produto`, `visao_geral_df`, `pendentes_df`.
-- `tests/test_migracao.py` — v2 → v3 em banco "antigo"; idempotência; banco novo nasce em v3.
+- `tests/test_produtos_vinculo.py` também cobre: banco "antigo" (sem as tabelas) ganha as tabelas ao
+  `conectar()` e `user_version` segue 2.
 - `tests/test_ui.py` — página no `test_pagina_carrega`; vincular por sugestão; criar produto; ignorar;
   aba Comparar mostra a loja mais barata.
 
