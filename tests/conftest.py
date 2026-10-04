@@ -80,7 +80,7 @@ def repo_produtos(repo_dados, nota_zaffari):
     zaf2 = Estabelecimento(zaf.cnpj[:8] + "002590", "CIA ZAFFARI FILIAL")
     atac = Estabelecimento("75315333008860", "ATACADAO S.A.")
     repo.zaf, repo.zaf2, repo.atac = zaf.cnpj, zaf2.cnpj, atac.cnpj
-    repo.salvar_nota(nota("4" * 44, zaf, datetime(2026, 9, 1, 10, 0), "199.56", [
+    repo.salvar_nota(nota("4" * 44, zaf, datetime(2026, 9, 1, 10, 0), "207.05", [
         item(1, "101", "QJO MUSSARELA S.CLARA FAT 1KG", "1", "UN", "52.90"),
         item(2, "102", "QJO MUSSARELA TIROLEZ FAT 1KG", "1", "UN", "48.90"),
         item(3, "103", "QJO PARMESAO PRES RAL 100G", "1", "UN", "12.98"),
@@ -88,7 +88,7 @@ def repo_produtos(repo_dados, nota_zaffari):
         item(5, "105", "QJO PRATO S.CLARA FAT 1KG", "1", "UN", "52.90"),
         item(6, "106", "BANANA PRATA GRANEL", "1.5", "KG", "6.98"),
     ]))
-    repo.salvar_nota(nota("5" * 44, atac, datetime(2026, 9, 5, 10, 0), "58.38", [
+    repo.salvar_nota(nota("5" * 44, atac, datetime(2026, 9, 5, 10, 0), "58.98", [
         item(1, "6752", "QJO.MUSS.FAT.DALIA", "1", "UND9", "47.90"),
         item(2, "6753", "BANANA PRATA", "2", "KG9", "5.49"),
         item(3, None, "SACOLA", "1", "UN", "0.10"),

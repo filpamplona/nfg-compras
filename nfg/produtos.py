@@ -23,7 +23,7 @@ def criar_produto(conn: sqlite3.Connection, nome: str, tipo: str, tamanho: str |
             ).lastrowid
     except sqlite3.IntegrityError as e:
         if "UNIQUE" in str(e).upper():
-            raise ProdutoDuplicado(nome) from e
+            raise ProdutoDuplicado(normalizar_texto(nome)) from e
         raise
 
 
