@@ -20,3 +20,7 @@ class BloqueioSefaz(ErroNFG):
 
 class CSVInvalido(ErroNFG):
     pass
+
+
+class ProdutoDuplicado(ErroNFG):
+    pass

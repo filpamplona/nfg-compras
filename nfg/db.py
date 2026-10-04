@@ -62,6 +62,25 @@ CREATE TABLE IF NOT EXISTS categoria_descricao (
   descricao_norm TEXT PRIMARY KEY,
   categoria_id INTEGER NOT NULL REFERENCES categorias(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS produtos (
+  id INTEGER PRIMARY KEY,
+  nome TEXT UNIQUE NOT NULL,
+  tipo TEXT NOT NULL,
+  tamanho TEXT,
+  venda TEXT NOT NULL DEFAULT 'UN' CHECK (venda IN ('UN','KG'))
+);
+CREATE TABLE IF NOT EXISTS produto_vinculo (
+  cnpj TEXT NOT NULL,
+  codigo TEXT NOT NULL,
+  produto_id INTEGER NOT NULL REFERENCES produtos(id) ON DELETE CASCADE,
+  origem TEXT NOT NULL CHECK (origem IN ('manual','auto')),
+  PRIMARY KEY (cnpj, codigo)
+);
+CREATE TABLE IF NOT EXISTS produto_ignorado (
+  cnpj TEXT NOT NULL,
+  codigo TEXT NOT NULL,
+  PRIMARY KEY (cnpj, codigo)
+);
 """
 
 
