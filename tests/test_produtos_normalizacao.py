@@ -66,6 +66,7 @@ def test_tamanho_igual_ao_escolhido_e_descartado():
 @pytest.mark.parametrize("desc,un", [("QJO MUSSARELA S.CLARA FAT 1KG", "UN"),
                                      ("LEITE PO 400G 30%", "UN"),
                                      ("OVO CAIP NATURALE C/20", "UN"),
+                                     ("LEITE 1KG 500G", "UN"), ("LEITE 500G 1KG", "UN"),
                                      ("BANANA PRATA GRANEL", "KG")])
 def test_nome_sugerido_faz_round_trip(desc, un):
     nome, _tipo, _tam, venda = sugerir_nome(desc, un)
@@ -105,3 +106,9 @@ def test_descricao_sem_palavras_nao_quebra(desc):
     a = normalizar_produto(desc, "UN")
     assert a.tipo == "" and a.tokens == frozenset()
     assert sugerir_nome(desc, "UN")[0] == normalizar_texto(desc)
+
+
+def test_decimal_com_ponto():
+    a = normalizar_produto("COCA COLA 1.5L", "UN")
+    assert a.tamanho == (Decimal(1500), "ML") and "1" not in a.tokens
+    assert normalizar_produto("AGUA 0.5L", "UN").tamanho == (Decimal(500), "ML")

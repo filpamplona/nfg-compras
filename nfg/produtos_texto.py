@@ -100,10 +100,10 @@ _UNIDADES: dict[str, str] = {
 _PRIORIDADE = {"PESO": 0, "EMB": 1, "PERC": 2}
 
 _RE_COLAR_MARCA = re.compile(r"\b([A-Z])\.(?=[A-Z]{2})")
-_RE_MULTIPACOTE = re.compile(r"(?<![\d,])(\d+)\s?X\s?(\d+(?:,\d+)?)\s?(KG|G|L|ML)\b")
-_RE_PESO = re.compile(r"(?<![\d,])(\d+(?:,\d+)?)\s?(KG|G|L|ML|M)\b")
+_RE_MULTIPACOTE = re.compile(r"(?<!\d)(?<!\d[.,])(\d+)\s?X\s?(\d+(?:[.,]\d+)?)\s?(KG|G|L|ML)\b")
+_RE_PESO = re.compile(r"(?<!\d)(?<!\d[.,])(\d+(?:[.,]\d+)?)\s?(KG|G|L|ML|M)\b")
 _RE_EMBALAGEM = re.compile(r"\bC/?(\d+)\b|\bL(\d+)\b")
-_RE_PERCENTUAL = re.compile(r"(?<![\d,])(\d+(?:,\d+)?)\s?%")
+_RE_PERCENTUAL = re.compile(r"(?<!\d)(?<!\d[.,])(\d+(?:[.,]\d+)?)\s?%")
 
 
 @dataclass(frozen=True)
@@ -125,7 +125,7 @@ def normalizar_unidade(unidade: str | None) -> str:
 
 
 def _decimal(texto: str) -> Decimal:
-    return Decimal(texto.replace(",", "."))
+    return Decimal(texto.replace(",", "."))  # aceita "," e "." como separador
 
 
 def _inteiro_se_possivel(valor: Decimal) -> Decimal:
@@ -185,7 +185,8 @@ def formatar_tamanho(tamanho: tuple[Decimal, str] | None) -> str | None:
     return _numero(valor) + unidade
 
 
-def normalizar_produto(descricao: str, unidade: str | None) -> Assinatura:
+def _assinar(descricao: str, unidade: str | None) -> tuple[Assinatura, tuple[str, ...], list[str]]:
+    """Devolve (assinatura, palavras regulares, palavras de tamanho secundário)."""
     texto = normalizar_texto(descricao or "")
     texto = _RE_COLAR_MARCA.sub(r"\1", texto)
     texto, achados = _extrair_tamanhos(texto)
@@ -212,17 +213,23 @@ def normalizar_produto(descricao: str, unidade: str | None) -> Assinatura:
             sem_repetidas.append(p)
 
     tipo = " ".join(sem_repetidas[:2])
-    finais = tuple(sem_repetidas) + tuple(s for s in secundarios if s not in sem_repetidas)
+    secundarios = [s for s in secundarios if s not in sem_repetidas]
+    finais = tuple(sem_repetidas) + tuple(secundarios)
     venda = "KG" if normalizar_unidade(unidade) == "KG" else "UN"
-    return Assinatura(tipo, finais, frozenset(finais), escolhido, venda)
+    return Assinatura(tipo, finais, frozenset(finais), escolhido, venda), tuple(sem_repetidas), secundarios
+
+
+def normalizar_produto(descricao: str, unidade: str | None) -> Assinatura:
+    return _assinar(descricao, unidade)[0]
 
 
 def sugerir_nome(descricao: str, unidade: str | None) -> tuple[str, str, str | None, str]:
     """Devolve (nome, tipo, tamanho, venda) sugeridos para um produto novo."""
-    a = normalizar_produto(descricao, unidade)
+    a, regulares, secundarios = _assinar(descricao, unidade)
     tamanho = formatar_tamanho(a.tamanho)
     if not a.palavras:
         nome = normalizar_texto(descricao or "")
         return nome, nome, tamanho, a.venda
-    nome = " ".join(a.palavras) + (f" {tamanho}" if tamanho else "")
+    # tamanho escolhido antes dos secundários, para que renormalizar o nome o escolha de novo
+    nome = " ".join((*regulares, *([tamanho] if tamanho else []), *secundarios))
     return nome, a.tipo, tamanho, a.venda
