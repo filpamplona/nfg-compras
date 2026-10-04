@@ -352,20 +352,14 @@ def test_conflitos_lista_mudou_nao_grava_em_outro_produto():
 PRODUTOS = str(RAIZ / "pages/5_Produtos.py")
 
 
-def _conn():
-    from nfg.config import abrir_repo
-    return abrir_repo().conn
+def _com_selecao(at, i=0):
+    # o AppTest zera a seleção da tabela a cada run (o navegador a mantém): reaplicar antes de cada run
+    at.session_state["tabela_pendentes"] = {"selection": {"rows": [i], "columns": []}}
+    return at
 
 
 def _selecionar_pendente(at, i=0):
-    # o AppTest zera a seleção da tabela a cada run (o navegador a mantém): reaplicar antes de cada run
-    at.session_state["tabela_pendentes"] = {"selection": {"rows": [i], "columns": []}}
-    at.run()
-
-
-def _com_selecao(at, i=0):
-    at.session_state["tabela_pendentes"] = {"selection": {"rows": [i], "columns": []}}
-    return at
+    _com_selecao(at, i).run()
 
 
 def test_produtos_criar_e_vincular_pendente():
@@ -448,3 +442,80 @@ def test_produtos_sem_dados(tmp_path, monkeypatch):
     assert not at.exception and at.info
 
 
+
+
+def test_produtos_reselecionar_restaura_sugestao():
+    from nfg.produtos import pendentes_df
+    from nfg.produtos_texto import sugerir_nome
+    p = pendentes_df(_conn()).iloc[0]
+    esperado = sugerir_nome(p["descricao"], p["unidade"])[0]
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _selecionar_pendente(at)
+    assert at.text_input(key="novo_nome").value == esperado
+    at.session_state["tabela_pendentes"] = {"selection": {"rows": [], "columns": []}}
+    at.run()
+    assert not at.text_input
+    _selecionar_pendente(at)
+    assert at.text_input(key="novo_nome").value == esperado
+
+
+def _catalogo_com(*nomes):
+    from nfg.produtos import criar_produto
+    conn = _conn()
+    return [criar_produto(conn, n, "T", None, "UN") for n in nomes]
+
+
+def _editar(at, **delta):
+    base = {"edited_rows": {}, "deleted_rows": [], "added_rows": []}
+    base.update(delta)
+    at.session_state["editor_catalogo"] = base
+    at.button(key="salvar_catalogo").click().run()
+    assert not at.exception
+
+
+def _nomes():
+    return [r[0] for r in _conn().execute("SELECT nome FROM produtos ORDER BY nome")]
+
+
+def test_catalogo_renomear():
+    _catalogo_com("AAA", "BBB")
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _editar(at, edited_rows={0: {"nome": "ZZZ"}})
+    assert _nomes() == ["BBB", "ZZZ"]
+
+
+def test_catalogo_renomear_duplicado_mostra_erro():
+    _catalogo_com("AAA", "BBB")
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _editar(at, edited_rows={0: {"nome": "BBB"}})
+    assert at.error
+    assert _nomes() == ["AAA", "BBB"]
+
+
+def test_catalogo_nome_em_branco_ignorado():
+    _catalogo_com("AAA")
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _editar(at, edited_rows={0: {"nome": "  "}})
+    assert _nomes() == ["AAA"]
+
+
+def test_catalogo_excluir_devolve_itens_aos_pendentes():
+    from nfg.produtos import pendentes_df, vincular
+    conn = _conn()
+    p = pendentes_df(conn).iloc[0]
+    (pid,) = _catalogo_com("AAA")
+    vincular(conn, p["cnpj"], p["codigo"], pid)
+    n = len(pendentes_df(conn))
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _editar(at, deleted_rows=[0])
+    assert _nomes() == []
+    assert len(pendentes_df(conn)) == n + 1
+
+
+def test_catalogo_erro_nao_aplica_exclusoes():
+    _catalogo_com("AAA", "BBB", "CCC")
+    at = AppTest.from_file(PRODUTOS, default_timeout=30).run()
+    _editar(at, edited_rows={0: {"nome": "BBB"}}, deleted_rows=[2])
+    assert at.error
+    assert _nomes() == ["AAA", "BBB", "CCC"]
+    assert at.session_state["editor_catalogo"]["deleted_rows"] == [2]

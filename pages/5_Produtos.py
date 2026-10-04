@@ -31,6 +31,7 @@ def avisar(tipo: str, texto: str) -> None:
 def concluir(tipo: str, texto: str) -> None:
     avisar(tipo, texto)
     st.session_state.pop("tabela_pendentes", None)
+    st.session_state.pop("_pendente_sel", None)
     st.rerun()
 
 
@@ -88,6 +89,7 @@ with tab_pendentes:
     pend = pendentes_df(conn)
     st.caption(f"{len(pend)} itens a vincular")
     if pend.empty:
+        st.session_state.pop("_pendente_sel", None)
         st.info("Nenhum item aguardando vínculo.")
     else:
         evento = st.dataframe(
@@ -100,6 +102,7 @@ with tab_pendentes:
             on_select="rerun", selection_mode="single-row")
         sel = evento.selection.rows
         if not sel or sel[0] >= len(pend):
+            st.session_state.pop("_pendente_sel", None)  # widgets do formulario deixam de existir
             st.caption("Selecione um item para vinculá-lo a um produto.")
         else:
             item = pend.iloc[sel[0]]
@@ -214,15 +217,21 @@ with tab_catalogo:
                 except ProdutoDuplicado as e:
                     erros += 1
                     avisar("error", str(e))
-            removidos = [rid for rid in originais if rid not in mantidos]
-            for rid in removidos:
-                excluir_produto(conn, rid)
-            if not erros:
+            if erros:
+                # nao exclui nem limpa o editor: o usuario corrige e salva de novo
+                st.warning(f"{alterados} alterado(s) e {criados} criado(s) salvos; "
+                           f"{erros} linha(s) com erro. Nenhuma exclusão foi aplicada.")
+                for _t, _m in st.session_state.pop("_msgs", []):
+                    getattr(st, _t)(_m)
+            else:
+                removidos = [rid for rid in originais if rid not in mantidos]
+                for rid in removidos:
+                    excluir_produto(conn, rid)
                 avisar("success", f"Catálogo salvo: {alterados} alterado(s), {criados} criado(s), "
                                   f"{len(removidos)} removido(s).")
-            st.session_state.pop("editor_catalogo", None)
-            st.session_state.pop("tabela_catalogo", None)
-            st.rerun()
+                st.session_state.pop("editor_catalogo", None)
+                st.session_state.pop("tabela_catalogo", None)
+                st.rerun()
 
         st.subheader("Vínculos")
         ev_cat = st.dataframe(
@@ -243,4 +252,5 @@ with tab_catalogo:
                     desvincular(conn, r["cnpj"], r["codigo"])
                     avisar("success", "Vínculo removido.")
                     st.session_state.pop("tabela_pendentes", None)
+                    st.session_state.pop("_pendente_sel", None)
                     st.rerun()

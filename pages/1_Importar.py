@@ -11,7 +11,6 @@ from nfg.coleta import anexar_xml, coletar, reprocessar_html
 from nfg.config import abrir_repo, html_dir
 from nfg.produtos import pendentes_df, vincular_automaticos
 from nfg.erros import CSVInvalido, ErroNFG, LayoutDesconhecido
-from nfg.produtos import pendentes_df, vincular_automaticos
 from nfg.sefaz_client import SefazClient
 from nfg.util import formatar_brl
 
