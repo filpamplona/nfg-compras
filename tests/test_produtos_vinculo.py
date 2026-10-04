@@ -208,3 +208,12 @@ def test_auto_idempotente(repo_produtos):
     vincular(c, repo_produtos.zaf, "101", _muss(repo_produtos))
     assert vincular_automaticos(c) >= 1
     assert vincular_automaticos(c) == 0
+
+
+def test_pendentes_usa_a_ultima_compra_inteira(repo_produtos):
+    repo_produtos.salvar_nota(nota("b" * 44, Estabelecimento(repo_produtos.zaf, "CIA ZAFFARI"),
+                                   datetime(2026, 9, 29, 10, 0), "13.50", [
+        item(1, "103", "QJO PARMESAO PRES RAL 100G", "1", None, "13.50")]))
+    r = pendentes_df(repo_produtos.conn).set_index(["cnpj", "codigo"]).loc[(repo_produtos.zaf, "103")]
+    assert r.compras == 2 and r.ultimo_preco == 13.50
+    assert r.unidade is None or r.unidade != r.unidade

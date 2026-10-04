@@ -121,7 +121,7 @@ def _recentes(conn: sqlite3.Connection) -> pd.DataFrame:
     if itens.empty:
         return itens.assign(compras=pd.Series(dtype=int))
     compras = itens.groupby(["cnpj", "codigo"]).size().rename("compras")
-    ultimo = itens.groupby(["cnpj", "codigo"], as_index=False).last()
+    ultimo = itens.drop_duplicates(["cnpj", "codigo"], keep="last")
     return ultimo.merge(compras, on=["cnpj", "codigo"])
 
 
@@ -233,8 +233,10 @@ def vincular_automaticos(conn: sqlite3.Connection) -> int:
         for (cnpj, codigo), descricao in desc.items():
             if (cnpj, codigo) in vinculos or (cnpj, codigo) in ignorados:
                 continue
-            pid = _unico({p for c, p in por_codigo.get((cnpj[:8], codigo), ()) if c != cnpj})
-            if pid is None:
+            cands = {p for c, p in por_codigo.get((cnpj[:8], codigo), ()) if c != cnpj}
+            if cands:
+                pid = _unico(cands)  # ambíguo: pula a chave, sem cair na regra 2
+            else:
                 pid = _unico(por_desc.get(_chave_descricao(descricao), set()))
             if pid is not None:
                 novos.append((cnpj, codigo, pid))
